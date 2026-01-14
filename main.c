@@ -4,7 +4,7 @@
 #define NSTARS 1000
 
 const float focalx = 200, focaly = 180;
-const int width = 500, height = 500, depth = 500;
+const int width = 500, height = 500, depth = 1000;
 // where stars spawn from
 const int zspawn = -depth;
 const int radmin = 40, radmax = 60;
@@ -40,7 +40,7 @@ Star stars[NSTARS];
 void star_init(Star* star) {
     star->x = xrandom() % width - 2*width; 
     star->y = xrandom() % height - 2*height; 
-    star->z = xrandom() % depth + 1;
+    star->z = depth - (xrandom() % 10);
     star->r = xrandom01() + 0.01;
     star->g = xrandom01() + 0.01;
     star->b = xrandom01() + 0.01;
