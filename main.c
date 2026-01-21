@@ -1,13 +1,20 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 #define NSTARS 1000
 
 const float focalx = 200, focaly = 180;
-const int width = 500, height = 500, depth = 1000;
+#define WIDTH 500
+#define HEIGHT 500
+#define DEPTH 500
 // where stars spawn from
-const int zspawn = -depth;
-const int radmin = 40, radmax = 60;
+const int zspawn = DEPTH;
+const int radmin = 10, radmax = 70;
+const int speed = 2;
 
 typedef struct Star {
     float r, g, b; // normalized color 0..1
@@ -15,11 +22,37 @@ typedef struct Star {
     float rad;     // maximum radius (when very close)
 } Star;
 
+typedef struct Rgb {
+    float r, g, b;
+} Rgb;
+
 static inline float clamp01(float x) {    
     if (x <= 0.0) return 0.0;
     if (x > 1.0) return 1.0;
     return x;
 }
+#define PPM
+
+#ifdef PPM
+static int write_ppm_rgb(const char* path, const Rgb* img, int width, int height) {
+    FILE* f = fopen(path, "wb");
+    if (!f) {
+        perror("Cannot open file!");
+        return 0;
+    }
+    fprintf(f, "P6\n%d %d\n255\n", width, height);
+    for (int i = 0; i < width * height; ++i) {
+        unsigned char r = (unsigned char)(clamp01(img[i].r) * 255.0f + 0.5f);
+        unsigned char g = (unsigned char)(clamp01(img[i].g) * 255.0f + 0.5f);
+        unsigned char b = (unsigned char)(clamp01(img[i].b) * 255.0f + 0.5f);
+        fputc(r, f);
+        fputc(g, f);
+        fputc(b, f);
+    }
+    fclose(f);
+    return 1;
+}
+#endif
 
 enum { XRAND_MAX = 0x7fffffff };
 static unsigned long long xrandom_state = 1;
@@ -36,11 +69,13 @@ static float xrandom01(void) {
 }
 
 Star stars[NSTARS];
+Rgb blur[WIDTH * HEIGHT] = {0};
+Rgb new_color[WIDTH * HEIGHT] = {0};
 
 void star_init(Star* star) {
-    star->x = xrandom() % width - 2*width; 
-    star->y = xrandom() % height - 2*height; 
-    star->z = depth - (xrandom() % 10);
+    star->x = xrandom() % WIDTH; 
+    star->y = xrandom() % HEIGHT; 
+    star->z = zspawn + xrandom() % DEPTH;
     star->r = xrandom01() + 0.01;
     star->g = xrandom01() + 0.01;
     star->b = xrandom01() + 0.01;
@@ -49,10 +84,66 @@ void star_init(Star* star) {
     star->rad = radmin + xrandom() % (radmax - radmin);
 }
 
-int main()
-{
+
+int main() {
+    int frames = 1000;
     for (int i = 0; i < NSTARS; ++i)
         star_init(&stars[i]);
+    for (int frame = 0; frame < frames; ++frame) {
+        memcpy(new_color, blur, sizeof(blur));
+        for (int i = 0; i < NSTARS; ++i) {
+            Star* star = &stars[i];
+            star->z -= speed;
+            // respawn if in the next step it would be past the viewer
+            if (star->z < speed)
+                star_init(star);
+            // TODO: next project and rasterize (blur etc.) them
+            // perspective transform around screen center:
+            // treat star->x/y as screen-space spawn coords, centered at WIDTH/2, HEIGHT/2
+            float projx = 2*focalx * (star->x - WIDTH/2) / star->z + WIDTH/2;
+            float projy = 2*focaly * (star->y - HEIGHT/2) / star->z + HEIGHT/2;
+            enum { MAX_PROJECT_RAD = 1800 };
+            float projrad = MAX_PROJECT_RAD/MAX(speed, star->z - speed);
+            printf("Star %d: Pos(%.2f, %.2f), Rad %.2f, Color(%.2f, %.2f, %.2f)\n",
+                   i, projx, projy, projrad,
+                   clamp01(star->r), clamp01(star->g), clamp01(star->b));
+            // compute integer bounding box and clamp to screen
+            int minx = MAX(0, (int)(projx - projrad));
+            int maxx = MIN(WIDTH, (int)(projx + projrad) + 1);
+            int miny = MAX(0, (int)(projy - projrad));
+            int maxy = MIN(HEIGHT, (int)(projy + projrad) + 1);
+            // rasterize
+            for (int y = miny; y < maxy; ++y) {
+                for (int x = minx; x < maxx; ++x) {
+                    float dx = x - projx;
+                    float dy = y - projy;
+                    float dist2 = dx*dx + dy*dy;
+                    if (dist2 < projrad*projrad) {
+                        float falloff = 1.0f - dist2/(projrad*projrad);
+                        int idx = y * WIDTH + x;
+                        new_color[idx].r += star->r * falloff;
+                        new_color[idx].g += star->g * falloff;
+                        new_color[idx].b += star->b * falloff;
+                    }
+                }
+            }
+        }
+        memcpy(blur, new_color, sizeof(blur));
+        const float decay = 0.83f;
+        for (int i = 0; i < WIDTH * HEIGHT; ++i) {
+            blur[i].r *= decay;
+            blur[i].g *= decay;
+            blur[i].b *= decay;
+        }
 
+#ifdef PPM
+        {
+            char path[64];
+            snprintf(path, sizeof(path), "blur_%03d.ppm", frame);
+            (void)write_ppm_rgb(path, blur, WIDTH, HEIGHT);
+        }
+#endif
+
+    }
     return 0;
 }
