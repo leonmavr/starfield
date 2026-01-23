@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -15,6 +16,8 @@ const float focalx = 200, focaly = 180;
 const int zspawn = DEPTH;
 const int radmin = 10, radmax = 70;
 const int speed = 2;
+// how much to decay the blur buffer each frame 0..1
+const float decay = 0.83f;
 
 typedef struct Star {
     float r, g, b; // normalized color 0..1
@@ -37,7 +40,7 @@ static inline float clamp01(float x) {
 static int write_ppm_rgb(const char* path, const Rgb* img, int width, int height) {
     FILE* f = fopen(path, "wb");
     if (!f) {
-        perror("Cannot open file!");
+        perror("fopen");
         return 0;
     }
     fprintf(f, "P6\n%d %d\n255\n", width, height);
@@ -91,14 +94,17 @@ int main() {
         star_init(&stars[i]);
     for (int frame = 0; frame < frames; ++frame) {
         memcpy(new_color, blur, sizeof(blur));
+        // additive lighting for later so no star is completely dark
+        const float ambient = 1/sqrt(NSTARS);
         for (int i = 0; i < NSTARS; ++i) {
             Star* star = &stars[i];
             star->z -= speed;
             // respawn if in the next step it would be past the viewer
             if (star->z < speed)
                 star_init(star);
-            // TODO: next project and rasterize (blur etc.) them
-            // perspective transform around screen center:
+            //--------------------------------------------------------
+            // persective projection
+            //--------------------------------------------------------
             // treat star->x/y as screen-space spawn coords, centered at WIDTH/2, HEIGHT/2
             float projx = 2*focalx * (star->x - WIDTH/2) / star->z + WIDTH/2;
             float projy = 2*focaly * (star->y - HEIGHT/2) / star->z + HEIGHT/2;
@@ -107,29 +113,34 @@ int main() {
             printf("Star %d: Pos(%.2f, %.2f), Rad %.2f, Color(%.2f, %.2f, %.2f)\n",
                    i, projx, projy, projrad,
                    clamp01(star->r), clamp01(star->g), clamp01(star->b));
+            //--------------------------------------------------------
+            // additive decaying glow
+            //--------------------------------------------------------
             // compute integer bounding box and clamp to screen
-            int minx = MAX(0, (int)(projx - projrad));
-            int maxx = MIN(WIDTH, (int)(projx + projrad) + 1);
-            int miny = MAX(0, (int)(projy - projrad));
+            int minx = MAX(0,      (int)(projx - projrad));
+            int maxx = MIN(WIDTH,  (int)(projx + projrad) + 1);
+            int miny = MAX(0,      (int)(projy - projrad));
             int maxy = MIN(HEIGHT, (int)(projy + projrad) + 1);
-            // rasterize
+            // 2D rasterization
             for (int y = miny; y < maxy; ++y) {
                 for (int x = minx; x < maxx; ++x) {
                     float dx = x - projx;
                     float dy = y - projy;
-                    float dist2 = dx*dx + dy*dy;
-                    if (dist2 < projrad*projrad) {
-                        float falloff = 1.0f - dist2/(projrad*projrad);
+                    // decay (falloff) within star's radius
+                    if (dx*dx + dy*dy < projrad*projrad) {
+                        float falloff = 1.0f - (dx*dx + dy*dy)/(projrad*projrad);
                         int idx = y * WIDTH + x;
-                        new_color[idx].r += star->r * falloff;
-                        new_color[idx].g += star->g * falloff;
-                        new_color[idx].b += star->b * falloff;
+                        new_color[idx].r += star->r * falloff + ambient;
+                        new_color[idx].g += star->g * falloff + ambient;
+                        new_color[idx].b += star->b * falloff + ambient;
                     }
                 }
             }
         }
+        //--------------------------------------------------------
+        // apply blur to current buffer
+        //--------------------------------------------------------
         memcpy(blur, new_color, sizeof(blur));
-        const float decay = 0.83f;
         for (int i = 0; i < WIDTH * HEIGHT; ++i) {
             blur[i].r *= decay;
             blur[i].g *= decay;
