@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -110,9 +109,6 @@ int main() {
             float projy = 2*focaly * (star->y - HEIGHT/2) / star->z + HEIGHT/2;
             enum { MAX_PROJECT_RAD = 1800 };
             float projrad = MAX_PROJECT_RAD/MAX(speed, star->z - speed);
-            printf("Star %d: Pos(%.2f, %.2f), Rad %.2f, Color(%.2f, %.2f, %.2f)\n",
-                   i, projx, projy, projrad,
-                   clamp01(star->r), clamp01(star->g), clamp01(star->b));
             //--------------------------------------------------------
             // additive decaying glow
             //--------------------------------------------------------
@@ -135,6 +131,28 @@ int main() {
                         new_color[idx].b += star->b * falloff + ambient;
                     }
                 }
+            }
+        }
+        // Luminance (Y) component of RGB to YUV conversion:
+        // [Y; U; V] = [0.299 0.587 0.114; -0.14713 -0.28886 0.436; 0.615 -0.51499 -0.10001] * [R; G; B]
+        float r = new_color[0].r, g = new_color[0].g, b = new_color[0].b;
+        float luminance = 0.299*r + 0.587*g + 0.114*b;
+        if (luminance >= 1.0f) {
+            r = g = b = 1.0f;
+        } else if (luminance <= 0.0f) {
+            r = g = b = 0.0f;
+        } else {
+            float sat = 1.0f;
+            if (r > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - r));
+            else if (r < 0.0f) sat = MIN(sat, luminance / (luminance - r));
+            if (g > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - g));
+            else if (g < 0.0f) sat = MIN(sat, luminance / (luminance - g));
+            if (b > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - b));
+            else if (b < 0.0f) sat = MIN(sat, luminance / (luminance - b));
+            if (sat < 1.0f) {
+                r = (r - luminance) * sat + luminance;
+                g = (g - luminance) * sat + luminance;
+                b = (b - luminance) * sat + luminance;
             }
         }
         //--------------------------------------------------------
