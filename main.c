@@ -8,7 +8,7 @@
 #define NSTARS 1000
 
 const float focalx = 200, focaly = 180;
-#define WIDTH 500
+#define WIDTH 900
 #define HEIGHT 500
 #define DEPTH 500
 // where stars spawn from
@@ -16,7 +16,7 @@ const int zspawn = DEPTH;
 const int radmin = 10, radmax = 70;
 const int speed = 2;
 // how much to decay the blur buffer each frame 0..1
-const float decay = 0.83f;
+const float decay = 0.7f;
 
 typedef struct Star {
     float r, g, b; // normalized color 0..1
@@ -56,8 +56,9 @@ static int write_ppm_rgb(const char* path, const Rgb* img, int width, int height
 }
 #endif
 
+// Linear congruential generator originally written by @Skeeto
 enum { XRAND_MAX = 0x7fffffff };
-static unsigned long long xrandom_state = 1;
+static unsigned long long xrandom_state = 1234;
 static void xsrandom(unsigned long long seed) {
     xrandom_state = seed;
 }
@@ -94,7 +95,7 @@ int main() {
     for (int frame = 0; frame < frames; ++frame) {
         memcpy(new_color, blur, sizeof(blur));
         // additive lighting for later so no star is completely dark
-        const float ambient = 1/sqrt(NSTARS);
+        const float ambient = 2.0f/sqrt(NSTARS);
         for (int i = 0; i < NSTARS; ++i) {
             Star* star = &stars[i];
             star->z -= speed;
@@ -132,27 +133,37 @@ int main() {
                     }
                 }
             }
-        }
-        // Luminance (Y) component of RGB to YUV conversion:
-        // [Y; U; V] = [0.299 0.587 0.114; -0.14713 -0.28886 0.436; 0.615 -0.51499 -0.10001] * [R; G; B]
-        float* r = &new_color[0].r, *g = &new_color[0].g, *b = &new_color[0].b;
-        float luminance = 0.299* (*r) + 0.587* (*g) + 0.114* (*b);
-        if (luminance >= 1.0f) {
-            *r = *g = *b = 1.0f;
-        } else if (luminance <= 0.0f) {
-            *r = *g = *b = 0.0f;
-        } else {
-            float sat = 1.0f;
-            if (*r > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *r));
-            else if (*r < 0.0f) sat = MIN(sat, luminance / (luminance - *r));
-            if (*g > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *g));
-            else if (*g < 0.0f) sat = MIN(sat, luminance / (luminance - *g));
-            if (*b > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *b));
-            else if (*b < 0.0f) sat = MIN(sat, luminance / (luminance - *b));
-            if (sat < 1.0f) {
-                *r = (*r - luminance) * sat + luminance;
-                *g = (*g - luminance) * sat + luminance;
-                *b = (*b - luminance) * sat + luminance;
+            // Luminance (Y) component of RGB to YUV conversion:
+            // [Y; U; V] = [0.299 0.587 0.114; -0.14713 -0.28886 0.436; 0.615 -0.51499 -0.10001] * [R; G; B]
+            float* r = &new_color[0].r, *g = &new_color[0].g, *b = &new_color[0].b;
+            float luminance = 0.299*(*r) + 0.587*(*g) + 0.114*(*b);
+            // After the blur computation, r, g, b may have exceeded [0..1],
+            // leading to luminance values outside [0..1].
+            if (luminance > 1.0f) {
+                *r = *g = *b = 1.0f;
+            } else if (luminance <= 0.0f) {
+                *r = *g = *b = 0.0f;
+            } else {
+                // sat = 1 fully preserves the color, while sat = 0 desaturates to gray
+                float sat = 1.0f;
+                // If not in 0..1, we clip each component (let it be C' = R, G, or B) to 0 or 1
+                // Set C' = 1, or C' = 0 and from linear interpolation between luminance and C',
+                // solve for saturation:
+                // C' = (C - luminance) * sat + luminance =>
+                // sat = (C' - luminance) / (C - luminance), C = 0 or 1
+                // Then, find the minimum saturation that keeps all components in [0..1]
+                if (*r > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *r));
+                else if (*r < 0.0f) sat = MIN(sat, luminance / (luminance - *r));
+                if (*g > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *g));
+                else if (*g < 0.0f) sat = MIN(sat, luminance / (luminance - *g));
+                if (*b > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *b));
+                else if (*b < 0.0f) sat = MIN(sat, luminance / (luminance - *b));
+                // compress oversaturated colors (desaturate) back into RGB cube
+                if (sat < 1.0f) {
+                    *r = (*r - luminance) * sat + luminance;
+                    *g = (*g - luminance) * sat + luminance;
+                    *b = (*b - luminance) * sat + luminance;
+                }
             }
         }
         //--------------------------------------------------------
