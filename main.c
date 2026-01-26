@@ -135,24 +135,24 @@ int main() {
         }
         // Luminance (Y) component of RGB to YUV conversion:
         // [Y; U; V] = [0.299 0.587 0.114; -0.14713 -0.28886 0.436; 0.615 -0.51499 -0.10001] * [R; G; B]
-        float r = new_color[0].r, g = new_color[0].g, b = new_color[0].b;
-        float luminance = 0.299*r + 0.587*g + 0.114*b;
+        float* r = &new_color[0].r, *g = &new_color[0].g, *b = &new_color[0].b;
+        float luminance = 0.299* (*r) + 0.587* (*g) + 0.114* (*b);
         if (luminance >= 1.0f) {
-            r = g = b = 1.0f;
+            *r = *g = *b = 1.0f;
         } else if (luminance <= 0.0f) {
-            r = g = b = 0.0f;
+            *r = *g = *b = 0.0f;
         } else {
             float sat = 1.0f;
-            if (r > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - r));
-            else if (r < 0.0f) sat = MIN(sat, luminance / (luminance - r));
-            if (g > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - g));
-            else if (g < 0.0f) sat = MIN(sat, luminance / (luminance - g));
-            if (b > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - b));
-            else if (b < 0.0f) sat = MIN(sat, luminance / (luminance - b));
+            if (*r > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *r));
+            else if (*r < 0.0f) sat = MIN(sat, luminance / (luminance - *r));
+            if (*g > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *g));
+            else if (*g < 0.0f) sat = MIN(sat, luminance / (luminance - *g));
+            if (*b > 1.0f) sat = MIN(sat, (luminance - 1.0f) / (luminance - *b));
+            else if (*b < 0.0f) sat = MIN(sat, luminance / (luminance - *b));
             if (sat < 1.0f) {
-                r = (r - luminance) * sat + luminance;
-                g = (g - luminance) * sat + luminance;
-                b = (b - luminance) * sat + luminance;
+                *r = (*r - luminance) * sat + luminance;
+                *g = (*g - luminance) * sat + luminance;
+                *b = (*b - luminance) * sat + luminance;
             }
         }
         //--------------------------------------------------------
