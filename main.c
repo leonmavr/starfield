@@ -176,7 +176,7 @@ static inline int ykdither_palette_idx(Rgb lin, int x, int y) {
         { 10, 58,  6, 54,  9, 57,  5, 53 },
         { 42, 26, 38, 22, 41, 25, 37, 21 },
     };
-    const float ungamma = 1.0f / gamma_;
+    static float ungamma = 1.0f / gamma_;
     Rgb lin_gamma = {
         powf(clamp01(lin.r), gamma_),
         powf(clamp01(lin.g), gamma_),
@@ -226,7 +226,7 @@ static inline int ykdither_palette_idx(Rgb lin, int x, int y) {
 static void ppm_write(const char* path, const Rgb* img, int width, int height) {
     FILE* f = fopen(path, "wb");
     if (!f)
-        perror("fopen");
+        perror("ERROR: Cannot open file to write.");
     fprintf(f, "P6\n%d %d\n255\n", width, height);
     for (int i = 0; i < width * height; ++i) {
         unsigned char r = clamp01(img[i].r) * 255.0f + 0.5f;
@@ -270,7 +270,7 @@ int main() {
             // respawn if in the next step it would be past the viewer
             if (star->z < speed) {
                 star_init(star);
-                star->z = zspawn - (xrandom() % (DEPTH/3));
+                star->z = zspawn + (xrandom() % (DEPTH/3));
             }
             //--------------------------------------------------------
             // persective projection
@@ -305,7 +305,7 @@ int main() {
             }
         }
         //--------------------------------------------------------
-        // main processing - blur and dithering
+        // frame processing - blur and dithering
         //--------------------------------------------------------
         memcpy(blurred, frame_buffer, sizeof(blurred));
         for (Rgb* pixel = blurred;  pixel < blurred + WIDTH * HEIGHT; ++pixel) {
