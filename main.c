@@ -3,12 +3,24 @@
 #include <math.h>
 #include <stdint.h>
 
-#define PPM
+// toggle to enable/disable windowed output in X
+#define WINDOW
+#ifdef WINDOW
+#include <stdlib.h>
+#include <unistd.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#endif
+
+// comment/uncomment to toggle below writing to file
+//#define PPM
+// comment/uncomment to toggle dithering (dithering may be slow)
+//#define DO_DITHER
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define NSTARS 500
-#define WIDTH 320
-#define HEIGHT 200
+#define WIDTH 600
+#define HEIGHT 480
 #define DEPTH 400
 
 typedef struct Rgb {
@@ -63,6 +75,149 @@ Star stars[NSTARS];
 Rgb frame_buffer[WIDTH * HEIGHT] = {};
 Rgb blurred[WIDTH * HEIGHT] = {};
 Rgb dithered[WIDTH * HEIGHT] = {};
+
+static inline float clamp01(float x) {    
+    if (x <= 0.0) return 0.0;
+    if (x > 1.0) return 1.0;
+    return x;
+}
+
+//--------------------------------------------------------------------
+// Window (X11) utilities
+//--------------------------------------------------------------------
+#ifdef WINDOW
+typedef struct WindowCtx {
+    Display* disp;   /* connection wrapper */
+    int screen;
+    Window win;
+    GC gc;           /* graphics context (fg/bg) */
+    Visual* visual;  /* pixel format */
+    int depth;
+    XImage* img;
+    Atom wm_delete;  /* deletion protocol return */
+} WindowCtx;
+
+static inline unsigned long x11_channel2mask(unsigned char c, unsigned long mask) {
+    if (mask == 0)
+        return 0;
+    int nzeros = 0;
+    // count trailing zeros
+    while ((mask & 0x1) == 0x0) {
+        mask >>= 1;
+        ++nzeros;
+    }
+    int nones = 0;
+    // count consecutive ones
+    while ((mask & 0x1) == 0x1) {
+        mask >>= 1;
+        ++nones;
+    }
+    if (nones == 0)
+        return 0;
+    // shift the consecutive ones to the right place
+    unsigned long maxv = (0x1 << nones) - 0x1;
+    // round to nearest before shifting it into a mask
+    unsigned long v = (c * maxv + 0x7F) / 255;
+    return v << nzeros;
+}
+
+static inline unsigned long x11_pack_rgb(WindowCtx* ctx, unsigned char r, unsigned char g, unsigned char b) {
+    return x11_channel2mask(r, ctx->visual->red_mask) |
+           x11_channel2mask(g, ctx->visual->green_mask) |
+           x11_channel2mask(b, ctx->visual->blue_mask);
+}
+
+static int x11_init(WindowCtx* ctx, int width, int height) {
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->disp = XOpenDisplay(NULL);
+    if (!ctx->disp) {
+        fprintf(stderr, "ERROR: XOpenDisplay failed.\\n");
+        return 0;
+    }
+
+    ctx->screen = DefaultScreen(ctx->disp);
+    ctx->visual = DefaultVisual(ctx->disp, ctx->screen);
+    ctx->depth = DefaultDepth(ctx->disp, ctx->screen);
+    unsigned long black = BlackPixel(ctx->disp, ctx->screen);
+    unsigned long white = WhitePixel(ctx->disp, ctx->screen);
+    ctx->win = XCreateSimpleWindow(ctx->disp, RootWindow(ctx->disp, ctx->screen),
+                                   0, 0, (unsigned)width, (unsigned)height,
+                                   1, white, black);
+    XStoreName(ctx->disp, ctx->win, "Starfield");
+    // register repaint | key | resize event types
+    XSelectInput(ctx->disp, ctx->win, ExposureMask | KeyPressMask | StructureNotifyMask);
+    ctx->gc = XCreateGC(ctx->disp, ctx->win, 0, NULL);
+    // delete when we receive a close event
+    ctx->wm_delete = XInternAtom(ctx->disp, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(ctx->disp, ctx->win, &ctx->wm_delete, 1);
+
+    size_t stride = (size_t)width * 4; // 4 bytes per pixel
+    size_t size = stride * (size_t)height;
+    char* data = (char*)calloc(1, size);
+    if (!data) {
+        fprintf(stderr, "ERROR: calloc failed for XImage buffer.\\n");
+        return 0;
+    }
+    ctx->img = XCreateImage(ctx->disp, ctx->visual, (unsigned)ctx->depth, ZPixmap, 0,
+                            data, (unsigned)width, (unsigned)height, 32, 0);
+    if (!ctx->img) {
+        fprintf(stderr, "ERROR: XCreateImage failed.\\n");
+        free(data);
+        return 0;
+    }
+    XMapWindow(ctx->disp, ctx->win);
+    XFlush(ctx->disp);
+    return 1;
+}
+
+static void x11_shutdown(WindowCtx* ctx) {
+    if (!ctx || !ctx->disp)
+        return;
+    if (ctx->img) {
+        XDestroyImage(ctx->img);
+        ctx->img = NULL;
+    }
+    if (ctx->gc) {
+        XFreeGC(ctx->disp, ctx->gc);
+        ctx->gc = 0;
+    }
+    if (ctx->win) {
+        XDestroyWindow(ctx->disp, ctx->win);
+        ctx->win = 0;
+    }
+    XCloseDisplay(ctx->disp);
+    ctx->disp = NULL;
+}
+
+static int x11_process_events(WindowCtx* ctx) {
+    while (XPending(ctx->disp)) {
+        XEvent ev;
+        XNextEvent(ctx->disp, &ev);
+        if (ev.type == ClientMessage) {
+            if ((Atom)ev.xclient.data.l[0] == ctx->wm_delete)
+                return 0;
+        } else if (ev.type == KeyPress) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void x11_image_show(WindowCtx* ctx, const Rgb* img, int width, int height) {
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const Rgb px = img[y * width + x];
+            unsigned char r = clamp01(px.r) * 255.0f + 0.5f;
+            unsigned char g = clamp01(px.g) * 255.0f + 0.5f;
+            unsigned char b = clamp01(px.b) * 255.0f + 0.5f;
+            unsigned long p = x11_pack_rgb(ctx, r, g, b);
+            XPutPixel(ctx->img, x, y, p);
+        }
+    }
+    XPutImage(ctx->disp, ctx->win, ctx->gc, ctx->img, 0, 0, 0, 0, (unsigned)width, (unsigned)height);
+    XFlush(ctx->disp);
+}
+#endif
 
 //--------------------------------------------------------------------
 // Random number generator utilities
@@ -136,12 +291,6 @@ static void palette_init(void) {
     }
 }
 
-static inline float clamp01(float x) {    
-    if (x <= 0.0) return 0.0;
-    if (x > 1.0) return 1.0;
-    return x;
-}
-
 static inline int lin_closest_idx(Rgb rgb) {
     int idx_best = 0;
     float err_min = 0.0f;
@@ -176,7 +325,7 @@ static inline int ykdither_palette_idx(Rgb lin, int x, int y) {
         { 10, 58,  6, 54,  9, 57,  5, 53 },
         { 42, 26, 38, 22, 41, 25, 37, 21 },
     };
-    static float ungamma = 1.0f / gamma_;
+    const float ungamma = 1.0f / gamma_;
     Rgb lin_gamma = {
         powf(clamp01(lin.r), gamma_),
         powf(clamp01(lin.g), gamma_),
@@ -260,6 +409,13 @@ int main() {
     palette_init();
     for (int i = 0; i < NSTARS; ++i)
         star_init(&stars[i]);
+
+#ifdef WINDOW
+    WindowCtx win;
+    int window_ok = x11_init(&win, WIDTH, HEIGHT);
+    int window_running = window_ok;
+#endif
+
     for (int frame = 0; frame < frames; ++frame) {
         memcpy(frame_buffer, blurred, sizeof(blurred));
         // additive lighting for later so no star is completely dark
@@ -272,17 +428,13 @@ int main() {
                 star_init(star);
                 star->z = zspawn + (xrandom() % (DEPTH/3));
             }
-            //--------------------------------------------------------
-            // persective projection
-            //--------------------------------------------------------
+            //// 1. persective projection
             // treat star->x/y as screen-space spawn coords, centered at WIDTH/2, HEIGHT/2
             float projx = 2*focalx * (star->x - WIDTH/2) / star->z + WIDTH/2;
             float projy = 2*focaly * (star->y - HEIGHT/2) / star->z + HEIGHT/2;
             enum { MAX_PROJECT_RAD = 1800 };
             float projrad = MAX_PROJECT_RAD/MAX(speed, star->z - speed);
-            //--------------------------------------------------------
-            // additive decaying glow
-            //--------------------------------------------------------
+            //// 2. additive decaying glow
             // compute integer bounding box and clamp to screen
             int minx = MAX(0,      (int)(projx - projrad));
             int maxx = MIN(WIDTH,  (int)(projx + projrad) + 1);
@@ -304,15 +456,14 @@ int main() {
                 }
             }
         }
-        //--------------------------------------------------------
-        // frame processing - blur and dithering
-        //--------------------------------------------------------
+        //// 3. frame processing - blur, chroma correct and dither
         memcpy(blurred, frame_buffer, sizeof(blurred));
         for (Rgb* pixel = blurred;  pixel < blurred + WIDTH * HEIGHT; ++pixel) {
             pixel->r *= decay;
             pixel->g *= decay;
             pixel->b *= decay;
         }
+#ifdef DO_DITHER
         for (int py = 0; py < HEIGHT; ++py) {
             for (int px = 0; px < WIDTH; ++px) {
                 int i = py * WIDTH + px;
@@ -322,6 +473,19 @@ int main() {
                 dithered[i] = palette_lin[p];
             }
         }
+#endif
+
+#ifdef WINDOW
+        if (window_running) {
+            window_running = x11_process_events(&win);
+            if (window_running)
+#ifdef DO_DITHER
+                x11_image_show(&win, dithered, WIDTH, HEIGHT);
+#else
+                x11_image_show(&win, blurred, WIDTH, HEIGHT);
+#endif
+        }
+#endif
 #ifdef PPM
         // change mod below to write more/fewer frames
         if (frame % 7 == 0) {
@@ -331,5 +495,10 @@ int main() {
         }
 #endif
     }
+
+#ifdef WINDOW
+    if (window_ok)
+        x11_shutdown(&win);
+#endif
     return 0;
 }
