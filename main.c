@@ -97,7 +97,7 @@ typedef struct WindowCtx {
     Atom wm_delete;  /* deletion protocol return */
 } WindowCtx;
 
-static inline unsigned long x11_channel2mask(unsigned char c, unsigned long mask) {
+static inline uint32_t x11_channel2mask(uint8_t c, uint32_t mask) {
     if (mask == 0)
         return 0;
     int nzeros = 0;
@@ -115,13 +115,13 @@ static inline unsigned long x11_channel2mask(unsigned char c, unsigned long mask
     if (nones == 0)
         return 0;
     // shift the consecutive ones to the right place
-    unsigned long maxv = (0x1 << nones) - 0x1;
+    uint32_t maxv = (0x1 << nones) - 0x1;
     // round to nearest before shifting it into a mask
-    unsigned long v = (c * maxv + 0x7F) / 255;
+    uint32_t v = (c * maxv + 0x7F) / 255;
     return v << nzeros;
 }
 
-static inline unsigned long x11_pack_rgb(WindowCtx* ctx, unsigned char r, unsigned char g, unsigned char b) {
+static inline uint32_t x11_pack_rgb(WindowCtx* ctx, uint8_t r, uint8_t g, uint8_t b) {
     return x11_channel2mask(r, ctx->visual->red_mask) |
            x11_channel2mask(g, ctx->visual->green_mask) |
            x11_channel2mask(b, ctx->visual->blue_mask);
@@ -138,12 +138,12 @@ static int x11_init(WindowCtx* ctx, int width, int height) {
     ctx->screen = DefaultScreen(ctx->disp);
     ctx->visual = DefaultVisual(ctx->disp, ctx->screen);
     ctx->depth = DefaultDepth(ctx->disp, ctx->screen);
-    unsigned long black = BlackPixel(ctx->disp, ctx->screen);
-    unsigned long white = WhitePixel(ctx->disp, ctx->screen);
+    uint32_t black = BlackPixel(ctx->disp, ctx->screen);
+    uint32_t white = WhitePixel(ctx->disp, ctx->screen);
     ctx->win = XCreateSimpleWindow(ctx->disp, RootWindow(ctx->disp, ctx->screen),
                                    0, 0, (unsigned)width, (unsigned)height,
                                    1, white, black);
-    XStoreName(ctx->disp, ctx->win, "Starfield");
+    XStoreName(ctx->disp, ctx->win, "Starfield - press any key to exit");
     // register repaint | key | resize event types
     XSelectInput(ctx->disp, ctx->win, ExposureMask | KeyPressMask | StructureNotifyMask);
     ctx->gc = XCreateGC(ctx->disp, ctx->win, 0, NULL);
@@ -207,10 +207,10 @@ static void x11_image_show(WindowCtx* ctx, const Rgb* img, int width, int height
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const Rgb px = img[y * width + x];
-            unsigned char r = clamp01(px.r) * 255.0f + 0.5f;
-            unsigned char g = clamp01(px.g) * 255.0f + 0.5f;
-            unsigned char b = clamp01(px.b) * 255.0f + 0.5f;
-            unsigned long p = x11_pack_rgb(ctx, r, g, b);
+            uint8_t r = clamp01(px.r) * 255.0f + 0.5f;
+            uint8_t g = clamp01(px.g) * 255.0f + 0.5f;
+            uint8_t b = clamp01(px.b) * 255.0f + 0.5f;
+            uint32_t p = x11_pack_rgb(ctx, r, g, b);
             XPutPixel(ctx->img, x, y, p);
         }
     }
@@ -224,8 +224,8 @@ static void x11_image_show(WindowCtx* ctx, const Rgb* img, int width, int height
 //--------------------------------------------------------------------
 // Linear congruential generator originally written by @Skeeto
 enum { XRAND_MAX = 0x7fffffff };
-static unsigned long long xrandom_state = 1234;
-static void xsrandom(unsigned long long seed) {
+static uint64_t xrandom_state = 1234;
+static void xsrandom(uint64_t seed) {
     xrandom_state = seed;
 }
 static int xrandom(void) {
@@ -315,7 +315,7 @@ static inline int ykdither_palette_idx(Rgb lin, int x, int y) {
     //   term in gamma space
     // - select one based on an 8x8 Bayer threshold.
     enum { CANDCOUNT = 64 };
-    static const unsigned char bayer8[8][8] = {
+    static const uint8_t bayer8[8][8] = {
         {  0, 48, 12, 60,  3, 51, 15, 63 },
         { 32, 16, 44, 28, 35, 19, 47, 31 },
         {  8, 56,  4, 52, 11, 59,  7, 55 },
@@ -367,7 +367,7 @@ static inline int ykdither_palette_idx(Rgb lin, int x, int y) {
     }
     // Bayer matrix selects the index (0..63) so that nearby pixels
     // have significantly different luma to reduce the "banding" effect
-    unsigned char b = bayer8[y & 7][x & 7];
+    uint8_t b = bayer8[y & 7][x & 7];
     return candidates[b];
 }
 
@@ -378,9 +378,9 @@ static void ppm_write(const char* path, const Rgb* img, int width, int height) {
         perror("ERROR: Cannot open file to write.");
     fprintf(f, "P6\n%d %d\n255\n", width, height);
     for (int i = 0; i < width * height; ++i) {
-        unsigned char r = clamp01(img[i].r) * 255.0f + 0.5f;
-        unsigned char g = clamp01(img[i].g) * 255.0f + 0.5f;
-        unsigned char b = clamp01(img[i].b) * 255.0f + 0.5f;
+        uint8_t r = clamp01(img[i].r) * 255.0f + 0.5f;
+        uint8_t g = clamp01(img[i].g) * 255.0f + 0.5f;
+        uint8_t b = clamp01(img[i].b) * 255.0f + 0.5f;
         fputc(r, f);
         fputc(g, f);
         fputc(b, f);
