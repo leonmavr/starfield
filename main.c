@@ -25,9 +25,15 @@
 //#define DO_DITHER
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#ifndef NSTARS
 #define NSTARS 500
+#endif
+#ifndef WIDTH
 #define WIDTH 640
+#endif
+#ifndef HEIGHT
 #define HEIGHT 480
+#endif
 #define DEPTH 450
 
 typedef struct Rgb {
