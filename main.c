@@ -80,10 +80,11 @@ static const uint32_t palette_raw[] = {
     0x3E3E2D,0x3E3E36,0x3F3F3F,
 };
 static Rgb palette_lin[sizeof(palette_raw) / sizeof(palette_raw[0])];
-Star stars[NSTARS];
-Rgb frame_buffer[WIDTH * HEIGHT] = {0};
-Rgb blurred[WIDTH * HEIGHT] = {0};
-Rgb dithered[WIDTH * HEIGHT] = {0};
+static Star stars[NSTARS];
+// color processing buffers
+static Rgb frame_buffer[WIDTH * HEIGHT] = {0};
+static Rgb blurred[WIDTH * HEIGHT] = {0};
+static Rgb dithered[WIDTH * HEIGHT] = {0};
 
 static inline float clamp01(float x) {    
     if (x <= 0.0) return 0.0;
