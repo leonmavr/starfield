@@ -2,6 +2,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 // toggle to enable/disable windowed output in X
 #define WINDOW
@@ -95,6 +96,11 @@ typedef struct WindowCtx {
     int depth;
     XImage* img;
     Atom wm_delete;  /* deletion protocol return */
+    // precomputed 8-bit channel LUTs for `visual -
+    // this avoids recomputing mask shifts/scales per pixel
+    uint32_t r_lut[256];
+    uint32_t g_lut[256];
+    uint32_t b_lut[256];
 } WindowCtx;
 
 static inline uint32_t x11_channel2mask(uint8_t c, uint32_t mask) {
@@ -122,9 +128,7 @@ static inline uint32_t x11_channel2mask(uint8_t c, uint32_t mask) {
 }
 
 static inline uint32_t x11_pack_rgb(WindowCtx* ctx, uint8_t r, uint8_t g, uint8_t b) {
-    return x11_channel2mask(r, ctx->visual->red_mask) |
-           x11_channel2mask(g, ctx->visual->green_mask) |
-           x11_channel2mask(b, ctx->visual->blue_mask);
+    return ctx->r_lut[r] | ctx->g_lut[g] | ctx->b_lut[b];
 }
 
 static int x11_init(WindowCtx* ctx, int width, int height) {
@@ -150,6 +154,13 @@ static int x11_init(WindowCtx* ctx, int width, int height) {
     // delete when we receive a close event
     ctx->wm_delete = XInternAtom(ctx->disp, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(ctx->disp, ctx->win, &ctx->wm_delete, 1);
+
+    // pre-compute mask LUTs for each channel for context's visual (pixels)
+    for (int i = 0; i <= 255; ++i) {
+        ctx->r_lut[i] = x11_channel2mask((uint8_t)i, ctx->visual->red_mask);
+        ctx->g_lut[i] = x11_channel2mask((uint8_t)i, ctx->visual->green_mask);
+        ctx->b_lut[i] = x11_channel2mask((uint8_t)i, ctx->visual->blue_mask);
+    }
 
     size_t stride = (size_t)width * 4; // 4 bytes per pixel
     size_t size = stride * (size_t)height;
@@ -204,17 +215,37 @@ static int x11_process_events(WindowCtx* ctx) {
 }
 
 static void x11_image_show(WindowCtx* ctx, const Rgb* img, int width, int height) {
+    bool fast_unpack32 = (ctx->img && ctx->img->bits_per_pixel == 32);
     for (int y = 0; y < height; ++y) {
+        uint8_t* row = NULL;
+        if (fast_unpack32)
+            row = (uint8_t*)ctx->img->data + y * ctx->img->bytes_per_line;
         for (int x = 0; x < width; ++x) {
             const Rgb px = img[y * width + x];
             uint8_t r = clamp01(px.r) * 255.0f + 0.5f;
             uint8_t g = clamp01(px.g) * 255.0f + 0.5f;
             uint8_t b = clamp01(px.b) * 255.0f + 0.5f;
             uint32_t p = x11_pack_rgb(ctx, r, g, b);
-            XPutPixel(ctx->img, x, y, p);
+            if (fast_unpack32) {
+                // load big-endian 32bpp
+                if (ctx->img->byte_order == LSBFirst) {
+                    ((uint32_t*)row)[x] = p;
+                } else { // little-endian 32bpp
+                    // indirectly write to image buffer in context
+                    uint8_t* disp_row = row + (size_t)x * 4;
+                    disp_row[0] = (uint8_t)((p >> 24) & 0xFF);
+                    disp_row[1] = (uint8_t)((p >> 16) & 0xFF);
+                    disp_row[2] = (uint8_t)((p >> 8) & 0xFF);
+                    disp_row[3] = (uint8_t)(p & 0xFF);
+                }
+            } else {
+                // arbitrary pixel format
+                XPutPixel(ctx->img, x, y, (unsigned long)p);
+            }
         }
     }
-    XPutImage(ctx->disp, ctx->win, ctx->gc, ctx->img, 0, 0, 0, 0, (unsigned)width, (unsigned)height);
+    XPutImage(ctx->disp, ctx->win, ctx->gc, ctx->img,
+              0, 0, 0, 0, (unsigned)width, (unsigned)height);
     XFlush(ctx->disp);
 }
 #endif
