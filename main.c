@@ -73,9 +73,9 @@ static const uint32_t palette_raw[] = {
 };
 static Rgb palette_lin[sizeof(palette_raw) / sizeof(palette_raw[0])];
 Star stars[NSTARS];
-Rgb frame_buffer[WIDTH * HEIGHT] = {};
-Rgb blurred[WIDTH * HEIGHT] = {};
-Rgb dithered[WIDTH * HEIGHT] = {};
+Rgb frame_buffer[WIDTH * HEIGHT] = {0};
+Rgb blurred[WIDTH * HEIGHT] = {0};
+Rgb dithered[WIDTH * HEIGHT] = {0};
 
 static inline float clamp01(float x) {    
     if (x <= 0.0) return 0.0;
@@ -256,16 +256,39 @@ static void x11_image_show(WindowCtx* ctx, const Rgb* img, int width, int height
 // Linear congruential generator originally written by @Skeeto
 enum { XRAND_MAX = 0x7fffffff };
 static uint64_t xrandom_state = 1234;
-static void xsrandom(uint64_t seed) {
+static void xrandom_seed(uint64_t seed) {
     xrandom_state = seed;
 }
 static int xrandom(void) {
     xrandom_state = xrandom_state*0x3243f6a8885a308d + 1;
     return xrandom_state >> 33;
 }
-static float xrandom01(void) {
-    enum { QUANT_LEVELS = 1000 };
-    return (xrandom() % QUANT_LEVELS) / (float)QUANT_LEVELS;
+
+static void usage(const char* argv0) {
+    fprintf(stderr,
+            "Usage: %s [--seed N] [--frames N]\n"
+            "  --seed N     RNG seed (uint64)\n"
+            "  --frames N   Number of frames; 0 = infinite\n"
+            "  -s N         Same as --seed\n"
+            "  -f N         Same as --frames\n"
+            "  -h, --help   Show this help\n",
+            argv0);
+}
+
+static int parse_u64(const char* s, uint64_t* out) {
+    if (!s || !*s)
+        return 0;
+    uint64_t v = 0;
+    for (const unsigned char* p = (const unsigned char*)s; *p; ++p) {
+        if (*p < '0' || *p > '9')
+            return 0;
+        uint64_t prev = v;
+        v = v * 10u + (uint64_t)(*p - '0');
+        if (v < prev)
+            return 0;
+    }
+    *out = v;
+    return 1;
 }
 
 //--------------------------------------------------------------------
@@ -436,8 +459,66 @@ void star_init(Star* star) {
 }
 
 
-int main() {
-    int frames = 1000;
+int main(int argc, char** argv) {
+    uint64_t frames = 1000;
+    uint64_t seed = 1234;
+
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
+            usage(argv[0]);
+            return 0;
+        }
+
+        const char* v = NULL;
+        if (!strcmp(a, "-s") || !strcmp(a, "--seed")) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ERROR: %s expects a value.\n", a);
+                return 2;
+            }
+            v = argv[++i];
+            if (!parse_u64(v, &seed)) {
+                fprintf(stderr, "ERROR: invalid seed: %s\n", v);
+                return 2;
+            }
+            continue;
+        }
+        if (!strcmp(a, "-f") || !strcmp(a, "--frames")) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ERROR: %s expects a value.\n", a);
+                return 2;
+            }
+            v = argv[++i];
+            if (!parse_u64(v, &frames)) {
+                fprintf(stderr, "ERROR: invalid frames: %s\n", v);
+                return 2;
+            }
+            continue;
+        }
+
+        if (!strncmp(a, "--seed=", 7)) {
+            v = a + 7;
+            if (!parse_u64(v, &seed)) {
+                fprintf(stderr, "ERROR: invalid seed: %s\n", v);
+                return 2;
+            }
+            continue;
+        }
+        if (!strncmp(a, "--frames=", 9)) {
+            v = a + 9;
+            if (!parse_u64(v, &frames)) {
+                fprintf(stderr, "ERROR: invalid frames: %s\n", v);
+                return 2;
+            }
+            continue;
+        }
+
+        fprintf(stderr, "ERROR: unknown argument: %s\n", a);
+        usage(argv[0]);
+        return 2;
+    }
+
+    xrandom_seed(seed);
     palette_init();
     for (int i = 0; i < NSTARS; ++i)
         star_init(&stars[i]);
@@ -448,7 +529,7 @@ int main() {
     int window_running = window_ok;
 #endif
 
-    for (int frame = 0; frame < frames; ++frame) {
+    for (uint64_t frame = 0; frames == 0 || frame < frames; ++frame) {
         memcpy(frame_buffer, blurred, sizeof(blurred));
         // additive lighting for later so no star is completely dark
         const float ambient = 0.05f/sqrt(NSTARS);
