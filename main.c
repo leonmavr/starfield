@@ -1,5 +1,5 @@
 #ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE 200809L // clock_gettime, nanosleep
 #endif
 
 #include <stdio.h>
@@ -10,15 +10,11 @@
 #include <time.h>
 #include <errno.h>
 
+#include "sf_rng.h"
+#include "sf_time.h"
+
 // toggle to enable/disable windowed output in X
 #define WINDOW
-#ifdef WINDOW
-#include <stdlib.h>
-#include <unistd.h>
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#endif
-
 // comment/uncomment to toggle below writing to file
 //#define PPM
 // comment/uncomment to toggle dithering (dithering may be slow)
@@ -34,7 +30,7 @@
 #ifndef HEIGHT
 #define HEIGHT 480
 #endif
-#define DEPTH 450
+#define DEPTH (5*WIDTH/7)
 
 typedef struct Rgb {
     float r, g, b;
@@ -95,210 +91,18 @@ static inline float clamp01(float x) {
     return x;
 }
 
-//--------------------------------------------------------------------
-// Window (X11) utilities
-//--------------------------------------------------------------------
-#ifdef WINDOW
-typedef struct WindowCtx {
-    Display* disp;   /* connection wrapper */
-    int screen;
-    Window win;
-    GC gc;           /* graphics context (fg/bg) */
-    Visual* visual;  /* pixel format */
-    int depth;
-    XImage* img;
-    Atom wm_delete;  /* deletion protocol return */
-    // precomputed 8-bit channel LUTs for `visual -
-    // this avoids recomputing mask shifts/scales per pixel
-    uint32_t r_lut[256];
-    uint32_t g_lut[256];
-    uint32_t b_lut[256];
-} WindowCtx;
-
-static inline uint32_t x11_channel2mask(uint8_t c, uint32_t mask) {
-    if (mask == 0)
-        return 0;
-    int nzeros = 0;
-    // count trailing zeros
-    while ((mask & 0x1) == 0x0) {
-        mask >>= 1;
-        ++nzeros;
-    }
-    int nones = 0;
-    // count consecutive ones
-    while ((mask & 0x1) == 0x1) {
-        mask >>= 1;
-        ++nones;
-    }
-    if (nones == 0)
-        return 0;
-    // shift the consecutive ones to the right place
-    uint32_t maxv = (0x1 << nones) - 0x1;
-    // round to nearest before shifting it into a mask
-    uint32_t v = (c * maxv + 0x7F) / 255;
-    return v << nzeros;
-}
-
-static inline uint32_t x11_pack_rgb(WindowCtx* ctx, uint8_t r, uint8_t g, uint8_t b) {
-    return ctx->r_lut[r] | ctx->g_lut[g] | ctx->b_lut[b];
-}
-
-static int x11_init(WindowCtx* ctx, int width, int height) {
-    memset(ctx, 0, sizeof(*ctx));
-    ctx->disp = XOpenDisplay(NULL);
-    if (!ctx->disp) {
-        fprintf(stderr, "ERROR: XOpenDisplay failed.\\n");
-        return 0;
-    }
-
-    ctx->screen = DefaultScreen(ctx->disp);
-    ctx->visual = DefaultVisual(ctx->disp, ctx->screen);
-    ctx->depth = DefaultDepth(ctx->disp, ctx->screen);
-    uint32_t black = BlackPixel(ctx->disp, ctx->screen);
-    uint32_t white = WhitePixel(ctx->disp, ctx->screen);
-    ctx->win = XCreateSimpleWindow(ctx->disp, RootWindow(ctx->disp, ctx->screen),
-                                   0, 0, (unsigned)width, (unsigned)height,
-                                   1, white, black);
-    XStoreName(ctx->disp, ctx->win, "Starfield - press any key to exit");
-    // register repaint | key | resize event types
-    XSelectInput(ctx->disp, ctx->win, ExposureMask | KeyPressMask | StructureNotifyMask);
-    ctx->gc = XCreateGC(ctx->disp, ctx->win, 0, NULL);
-    // delete when we receive a close event
-    ctx->wm_delete = XInternAtom(ctx->disp, "WM_DELETE_WINDOW", False);
-    XSetWMProtocols(ctx->disp, ctx->win, &ctx->wm_delete, 1);
-
-    // pre-compute mask LUTs for each channel for context's visual (pixels)
-    for (int i = 0; i <= 255; ++i) {
-        ctx->r_lut[i] = x11_channel2mask((uint8_t)i, ctx->visual->red_mask);
-        ctx->g_lut[i] = x11_channel2mask((uint8_t)i, ctx->visual->green_mask);
-        ctx->b_lut[i] = x11_channel2mask((uint8_t)i, ctx->visual->blue_mask);
-    }
-
-    size_t stride = (size_t)width * 4; // 4 bytes per pixel
-    size_t size = stride * (size_t)height;
-    char* data = (char*)calloc(1, size);
-    if (!data) {
-        fprintf(stderr, "ERROR: calloc failed for XImage buffer.\\n");
-        return 0;
-    }
-    ctx->img = XCreateImage(ctx->disp, ctx->visual, (unsigned)ctx->depth, ZPixmap, 0,
-                            data, (unsigned)width, (unsigned)height, 32, 0);
-    if (!ctx->img) {
-        fprintf(stderr, "ERROR: XCreateImage failed.\\n");
-        free(data);
-        return 0;
-    }
-    XMapWindow(ctx->disp, ctx->win);
-    XFlush(ctx->disp);
-    return 1;
-}
-
-static void x11_shutdown(WindowCtx* ctx) {
-    if (!ctx || !ctx->disp)
-        return;
-    if (ctx->img) {
-        XDestroyImage(ctx->img);
-        ctx->img = NULL;
-    }
-    if (ctx->gc) {
-        XFreeGC(ctx->disp, ctx->gc);
-        ctx->gc = 0;
-    }
-    if (ctx->win) {
-        XDestroyWindow(ctx->disp, ctx->win);
-        ctx->win = 0;
-    }
-    XCloseDisplay(ctx->disp);
-    ctx->disp = NULL;
-}
-
-static int x11_process_events(WindowCtx* ctx) {
-    while (XPending(ctx->disp)) {
-        XEvent ev;
-        XNextEvent(ctx->disp, &ev);
-        if (ev.type == ClientMessage) {
-            if ((Atom)ev.xclient.data.l[0] == ctx->wm_delete)
-                return 0;
-        } else if (ev.type == KeyPress) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static void x11_image_show(WindowCtx* ctx, const Rgb* img, int width, int height) {
-    bool fast_unpack32 = (ctx->img && ctx->img->bits_per_pixel == 32);
-    for (int y = 0; y < height; ++y) {
-        uint8_t* row = NULL;
-        if (fast_unpack32)
-            row = (uint8_t*)ctx->img->data + y * ctx->img->bytes_per_line;
-        for (int x = 0; x < width; ++x) {
-            const Rgb px = img[y * width + x];
-            uint8_t r = clamp01(px.r) * 255.0f + 0.5f;
-            uint8_t g = clamp01(px.g) * 255.0f + 0.5f;
-            uint8_t b = clamp01(px.b) * 255.0f + 0.5f;
-            uint32_t p = x11_pack_rgb(ctx, r, g, b);
-            if (fast_unpack32) {
-                // load big-endian 32bpp
-                if (ctx->img->byte_order == LSBFirst) {
-                    ((uint32_t*)row)[x] = p;
-                } else { // little-endian 32bpp
-                    // indirectly write to image buffer in context
-                    uint8_t* disp_row = row + (size_t)x * 4;
-                    disp_row[0] = (uint8_t)((p >> 24) & 0xFF);
-                    disp_row[1] = (uint8_t)((p >> 16) & 0xFF);
-                    disp_row[2] = (uint8_t)((p >> 8) & 0xFF);
-                    disp_row[3] = (uint8_t)(p & 0xFF);
-                }
-            } else {
-                // arbitrary pixel format
-                XPutPixel(ctx->img, x, y, (unsigned long)p);
-            }
-        }
-    }
-    XPutImage(ctx->disp, ctx->win, ctx->gc, ctx->img,
-              0, 0, 0, 0, (unsigned)width, (unsigned)height);
-    XFlush(ctx->disp);
-}
-#endif
-
-//--------------------------------------------------------------------
-// Random number generator utilities
-//--------------------------------------------------------------------
-// Linear congruential generator originally written by @Skeeto
-enum { XRAND_MAX = 0x7fffffff };
-static uint64_t xrandom_state = 1234;
-static void xrandom_seed(uint64_t seed) {
-    xrandom_state = seed;
-}
-static int xrandom(void) {
-    xrandom_state = xrandom_state*0x3243f6a8885a308d + 1;
-    return xrandom_state >> 33;
-}
+// these includes depend on WIDTH and HEIGHT
+#include "sf_x11.h"
+#include "sf_ppm.h"
 
 static void usage(const char* argv0) {
     fprintf(stderr,
             "Usage: %s [--seed N] [--frames N] [--fps N]\n"
             "  --seed|-s N     RNG seed (positive integer)\n"
-            "  --frames|-f N   Number of frames; 0 = infinite\n"
-            "  --fps|-p N      FPS cap; 0 = uncapped (default 60)\n"
+            "  --frames|-f N   Number of frames: 0 = infinite\n"
+            "  --fps|-p N      FPS cap: 0 = uncapped (default 60)\n"
             "  -h, --help   Show this help\n",
             argv0);
-}
-
-static uint64_t now_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-}
-
-static void sleep_ns(uint64_t ns) {
-    struct timespec req;
-    req.tv_sec = (time_t)(ns / 1000000000ull);
-    req.tv_nsec = (long)(ns % 1000000000ull);
-    while (nanosleep(&req, &req) != 0 && errno == EINTR) {
-        // retry with remaining time
-    }
 }
 
 static int parse_u64(const char* s, uint64_t* out) {
@@ -396,6 +200,7 @@ static inline int ykdither_palette_idx(Rgb lin, int x, int y) {
     // - generate a set of candidate palette entries using an error
     //   term in gamma space
     // - select one based on an 8x8 Bayer threshold.
+    // Reference: https://bisqwit.iki.fi/story/howto/dither/jy/
     enum { CANDCOUNT = 64 };
     static const uint8_t bayer8[8][8] = {
         {  0, 48, 12, 60,  3, 51, 15, 63 },
@@ -453,25 +258,7 @@ static inline int ykdither_palette_idx(Rgb lin, int x, int y) {
     return candidates[b];
 }
 
-#ifdef PPM
-static void ppm_write(const char* path, const Rgb* img, int width, int height) {
-    FILE* f = fopen(path, "wb");
-    if (!f)
-        perror("ERROR: Cannot open file to write.");
-    fprintf(f, "P6\n%d %d\n255\n", width, height);
-    for (int i = 0; i < width * height; ++i) {
-        uint8_t r = clamp01(img[i].r) * 255.0f + 0.5f;
-        uint8_t g = clamp01(img[i].g) * 255.0f + 0.5f;
-        uint8_t b = clamp01(img[i].b) * 255.0f + 0.5f;
-        fputc(r, f);
-        fputc(g, f);
-        fputc(b, f);
-    }
-    fclose(f);
-}
-#endif
-
-void star_init(Star* star) {
+static void star_init(Star* star) {
     star->x = xrandom() % WIDTH; 
     star->y = xrandom() % HEIGHT; 
     star->z = DEPTH/2 + xrandom() % DEPTH;
@@ -520,6 +307,9 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "ERROR: invalid frames: %s\n", val);
                 return 1;
             }
+#ifdef PPM
+            frames = MIN(frames, 99999); // do not fill the disk with PPms
+#endif
             continue;
         }
         if (!strcmp(arg, "-p") || !strcmp(arg, "--fps")) {
@@ -639,11 +429,12 @@ int main(int argc, char** argv) {
 #ifdef WINDOW
         if (window_running) {
             window_running = x11_process_events(&win);
-            if (window_running)
+            if (!window_running)
+                break;
 #ifdef DO_DITHER
-                x11_image_show(&win, dithered, WIDTH, HEIGHT);
+            x11_image_show(&win, dithered, WIDTH, HEIGHT);
 #else
-                x11_image_show(&win, blurred, WIDTH, HEIGHT);
+            x11_image_show(&win, blurred, WIDTH, HEIGHT);
 #endif
         }
 #endif
@@ -651,11 +442,10 @@ int main(int argc, char** argv) {
         // change mod below to write more/fewer frames
         if (frame % 7 == 0) {
             char path[64];
-            snprintf(path, sizeof(path), "blur_%03d.ppm", frame);
+            snprintf(path, sizeof(path), "blur_%05d.ppm", frame);
             ppm_write(path, dithered, WIDTH, HEIGHT);
         }
 #endif
-
         if (target_ns > 0) {
             const uint64_t elapsed_ns = now_ns() - frame_start_ns;
             if (elapsed_ns < target_ns)
