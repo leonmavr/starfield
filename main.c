@@ -1,8 +1,14 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
+#include <errno.h>
 
 // toggle to enable/disable windowed output in X
 #define WINDOW
@@ -266,13 +272,27 @@ static int xrandom(void) {
 
 static void usage(const char* argv0) {
     fprintf(stderr,
-            "Usage: %s [--seed N] [--frames N]\n"
-            "  --seed N     RNG seed (uint64)\n"
-            "  --frames N   Number of frames; 0 = infinite\n"
-            "  -s N         Same as --seed\n"
-            "  -f N         Same as --frames\n"
+            "Usage: %s [--seed N] [--frames N] [--fps N]\n"
+            "  --seed|-s N     RNG seed (positive integer)\n"
+            "  --frames|-f N   Number of frames; 0 = infinite\n"
+            "  --fps|-p N      FPS cap; 0 = uncapped (default 60)\n"
             "  -h, --help   Show this help\n",
             argv0);
+}
+
+static uint64_t now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static void sleep_ns(uint64_t ns) {
+    struct timespec req;
+    req.tv_sec = (time_t)(ns / 1000000000ull);
+    req.tv_nsec = (long)(ns % 1000000000ull);
+    while (nanosleep(&req, &req) != 0 && errno == EINTR) {
+        // retry with remaining time
+    }
 }
 
 static int parse_u64(const char* s, uint64_t* out) {
@@ -283,7 +303,8 @@ static int parse_u64(const char* s, uint64_t* out) {
         if (*p < '0' || *p > '9')
             return 0;
         uint64_t prev = v;
-        v = v * 10u + (uint64_t)(*p - '0');
+        // ASCII char to int
+        v = v * 10 + (uint64_t)(*p - '0');
         if (v < prev)
             return 0;
     }
@@ -462,60 +483,79 @@ void star_init(Star* star) {
 int main(int argc, char** argv) {
     uint64_t frames = 1000;
     uint64_t seed = 1234;
+    uint64_t fps = 60;
 
     for (int i = 1; i < argc; ++i) {
-        const char* a = argv[i];
-        if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
+        const char* arg = argv[i];
+        if (!strcmp(arg, "-h") || !strcmp(arg, "--help")) {
             usage(argv[0]);
             return 0;
         }
-
-        const char* v = NULL;
-        if (!strcmp(a, "-s") || !strcmp(a, "--seed")) {
+        const char* val = NULL;
+        if (!strcmp(arg, "-s") || !strcmp(arg, "--seed")) {
             if (i + 1 >= argc) {
-                fprintf(stderr, "ERROR: %s expects a value.\n", a);
-                return 2;
+                fprintf(stderr, "ERROR: %s expects a value.\n", arg);
+                return 1;
             }
-            v = argv[++i];
-            if (!parse_u64(v, &seed)) {
-                fprintf(stderr, "ERROR: invalid seed: %s\n", v);
-                return 2;
+            val = argv[++i];
+            if (!parse_u64(val, &seed)) {
+                fprintf(stderr, "ERROR: invalid seed: %s\n", val);
+                return 1;
             }
             continue;
         }
-        if (!strcmp(a, "-f") || !strcmp(a, "--frames")) {
+        if (!strcmp(arg, "-f") || !strcmp(arg, "--frames")) {
             if (i + 1 >= argc) {
-                fprintf(stderr, "ERROR: %s expects a value.\n", a);
-                return 2;
+                fprintf(stderr, "ERROR: %s expects a value.\n", arg);
+                return 1;
             }
-            v = argv[++i];
-            if (!parse_u64(v, &frames)) {
-                fprintf(stderr, "ERROR: invalid frames: %s\n", v);
-                return 2;
+            val = argv[++i];
+            if (!parse_u64(val, &frames)) {
+                fprintf(stderr, "ERROR: invalid frames: %s\n", val);
+                return 1;
+            }
+            continue;
+        }
+        if (!strcmp(arg, "-p") || !strcmp(arg, "--fps")) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ERROR: %s expects a value.\n", arg);
+                return 1;
+            }
+            val = argv[++i];
+            if (!parse_u64(val, &fps)) {
+                fprintf(stderr, "ERROR: invalid fps: %s\n", val);
+                return 1;
+            }
+            continue;
+        }
+        if (!strncmp(arg, "--seed=", strlen("--seed="))) {
+            val = arg + strlen("--seed=");
+            if (!parse_u64(val, &seed)) {
+                fprintf(stderr, "ERROR: invalid seed: %s\n", val);
+                return 1;
+            }
+            continue;
+        }
+        if (!strncmp(arg, "--frames=", strlen("--frames="))) {
+            val = arg + strlen("--frames=");
+            if (!parse_u64(val, &frames)) {
+                fprintf(stderr, "ERROR: invalid frames: %s\n", val);
+                return 1;
+            }
+            continue;
+        }
+        if (!strncmp(arg, "--fps=", strlen("--fps="))) {
+            val = arg + strlen("--fps=");
+            if (!parse_u64(val, &fps)) {
+                fprintf(stderr, "ERROR: invalid fps: %s\n", val);
+                return 1;
             }
             continue;
         }
 
-        if (!strncmp(a, "--seed=", 7)) {
-            v = a + 7;
-            if (!parse_u64(v, &seed)) {
-                fprintf(stderr, "ERROR: invalid seed: %s\n", v);
-                return 2;
-            }
-            continue;
-        }
-        if (!strncmp(a, "--frames=", 9)) {
-            v = a + 9;
-            if (!parse_u64(v, &frames)) {
-                fprintf(stderr, "ERROR: invalid frames: %s\n", v);
-                return 2;
-            }
-            continue;
-        }
-
-        fprintf(stderr, "ERROR: unknown argument: %s\n", a);
+        fprintf(stderr, "ERROR: unknown argument: %s\n", arg);
         usage(argv[0]);
-        return 2;
+        return 1;
     }
 
     xrandom_seed(seed);
@@ -529,7 +569,9 @@ int main(int argc, char** argv) {
     int window_running = window_ok;
 #endif
 
+    const uint64_t target_ns = (fps > 0) ? (1000000000ull / fps) : 0;
     for (uint64_t frame = 0; frames == 0 || frame < frames; ++frame) {
+        const uint64_t frame_start_ns = (target_ns > 0) ? now_ns() : 0;
         memcpy(frame_buffer, blurred, sizeof(blurred));
         // additive lighting for later so no star is completely dark
         const float ambient = 0.05f/sqrt(NSTARS);
@@ -607,6 +649,12 @@ int main(int argc, char** argv) {
             ppm_write(path, dithered, WIDTH, HEIGHT);
         }
 #endif
+
+        if (target_ns > 0) {
+            const uint64_t elapsed_ns = now_ns() - frame_start_ns;
+            if (elapsed_ns < target_ns)
+                sleep_ns(target_ns - elapsed_ns);
+        }
     }
 
 #ifdef WINDOW
