@@ -19,9 +19,9 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define NSTARS 500
-#define WIDTH 600
+#define WIDTH 640
 #define HEIGHT 480
-#define DEPTH 400
+#define DEPTH 450
 
 typedef struct Rgb {
     float r, g, b;
@@ -35,7 +35,7 @@ typedef struct Star {
 
 const float focalx = 200, focaly = 180;
 // where stars spawn from
-const int zspawn = DEPTH*2;
+const int zspawn = 5*DEPTH/4;
 const int radmin = 4, radmax = 40;
 const int speed = 2;
 // how much to decay the blur buffer each frame
@@ -279,7 +279,8 @@ static inline void chroma_correct(Rgb* color) {
 }
 
 static void palette_init(void) {
-    for (size_t i = 0; i < sizeof(palette_raw) / sizeof(palette_raw[0]); ++i) {
+    size_t sz = sizeof(palette_raw) / sizeof(palette_raw[0]);
+    for (size_t i = 0; i < sz; ++i) {
         uint32_t p = palette_raw[i];
         // 6 bits per channel -> divide by 2^6-1 to normalize
         float r = ((p >> 16) & 0xFF) / 63.0f;
@@ -392,7 +393,7 @@ static void ppm_write(const char* path, const Rgb* img, int width, int height) {
 void star_init(Star* star) {
     star->x = xrandom() % WIDTH; 
     star->y = xrandom() % HEIGHT; 
-    star->z = 1 + xrandom() % DEPTH;
+    star->z = DEPTH/2 + xrandom() % DEPTH;
     // random color from the palette
     const size_t palette_count = sizeof(palette_raw) /
                                  sizeof(palette_raw[0]);
