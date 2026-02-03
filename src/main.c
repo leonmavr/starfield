@@ -84,7 +84,9 @@ static Star stars[NSTARS];
 // color processing buffers
 static Rgb frame_buffer[WIDTH * HEIGHT] = {0};
 static Rgb blurred[WIDTH * HEIGHT] = {0};
+#ifdef DO_DITHER
 static Rgb dithered[WIDTH * HEIGHT] = {0};
+#endif
 
 static inline float clamp01(float x) {    
     if (x <= 0.0) return 0.0;
@@ -92,8 +94,10 @@ static inline float clamp01(float x) {
     return x;
 }
 
-// these includes depend on WIDTH and HEIGHT
+// these includes depend on WIDTH, HEIGHT and clamp01
+#ifndef NO_X11
 #include "sf_x11.h"
+#endif
 #include "sf_ppm.h"
 
 static void usage(const char* argv0) {
@@ -102,7 +106,7 @@ static void usage(const char* argv0) {
             "  --seed|-s N     RNG seed (positive integer)\n"
             "  --frames|-f N   Number of frames: 0 = infinite\n"
             "  --fps|-p N      FPS cap: 0 = uncapped (default 60)\n"
-            "  -h, --help   Show this help\n",
+            "  -h, --help      Show this help\n",
             argv0);
 }
 
@@ -123,9 +127,7 @@ static int parse_u64(const char* s, uint64_t* out) {
     return 1;
 }
 
-//--------------------------------------------------------------------
-// Star flight
-//--------------------------------------------------------------------
+
 static inline void chroma_correct(Rgb* color) {
     // Luminance (Y) component of RGB to YUV conversion:
     // [Y; U; V] = [0.299    0.587    0.114;
@@ -360,7 +362,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < NSTARS; ++i)
         star_init(&stars[i]);
 
-#ifdef WINDOW
+#ifndef NO_X11
     WindowCtx win;
     int window_ok = x11_init(&win, WIDTH, HEIGHT);
     int window_running = window_ok;
@@ -427,7 +429,7 @@ int main(int argc, char** argv) {
         }
 #endif
 
-#ifdef WINDOW
+#ifndef NO_X11
         if (window_running) {
             window_running = x11_process_events(&win);
             if (!window_running)
@@ -443,8 +445,12 @@ int main(int argc, char** argv) {
         // change mod below to write more/fewer frames
         if (frame % 7 == 0) {
             char path[64];
-            snprintf(path, sizeof(path), "blur_%05d.ppm", frame);
+            snprintf(path, sizeof(path), "blur_%05lu.ppm", frame);
+#ifdef DO_DITHER
             ppm_write(path, dithered, WIDTH, HEIGHT);
+#else
+            ppm_write(path, blurred, WIDTH, HEIGHT);
+#endif
         }
 #endif
         if (target_ns > 0) {
@@ -454,7 +460,7 @@ int main(int argc, char** argv) {
         }
     }
 
-#ifdef WINDOW
+#ifndef NO_X11
     if (window_ok)
         x11_shutdown(&win);
 #endif

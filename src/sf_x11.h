@@ -1,7 +1,7 @@
 #ifndef SF_X11_H
 #define SF_X11_H
 
-#ifdef WINDOW
+#ifndef NO_X11
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,9 +13,6 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
-//--------------------------------------------------------------------
-// Window (X11) utilities
-//--------------------------------------------------------------------
 
 typedef struct WindowCtx {
     Display* disp;   /* connection wrapper */
