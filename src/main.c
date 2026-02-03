@@ -42,14 +42,14 @@ typedef struct Star {
     float rad;     // maximum radius (when very close)
 } Star;
 
-const float focalx = 200, focaly = 180;
+static const float focalx = 200, focaly = 180;
 // where stars spawn from
-const int zspawn = 5*DEPTH/4;
-const int radmin = 4, radmax = 40;
-const int speed = 2;
+static const int zspawn = 5*DEPTH/4;
+static const int radmin = 4, radmax = 40;
+static const int speed = 2;
 // how much to decay the blur buffer each frame
-const float decay = 0.83f;
-const float gamma_ = 2.2f;
+static const float decay = 0.83f;
+static const float gamma_ = 2.2f;
 // 6-bit-per-channel luma-sorted palette entries encoded as 0xRRGGBB where each channel is 0..63.
 static const uint32_t palette_raw[] = {
     0x000000,0x000001,0x010101,0x010102,0x020101,0x010201,0x010202,0x030102,0x020202,0x020203,
