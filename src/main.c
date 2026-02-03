@@ -14,7 +14,7 @@
 #include "sf_time.h"
 
 // toggle to enable/disable windowed output in X
-#define WINDOW
+//#define NO_X11
 // comment/uncomment to toggle below writing to file
 //#define PPM
 // comment/uncomment to toggle dithering (dithering may be slow)
