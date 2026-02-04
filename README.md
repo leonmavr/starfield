@@ -1,38 +1,60 @@
 # starfield
 
-Porting Bisqwit's starfield simulation from QB64 to C ([code](https://bisqwit.iki.fi/jutut/kuvat/programming_examples/sfield_qb64.bas), [video](https://www.youtube.com/watch?v=VL0oGct1S4Q))
+Joel Yliluoma (nicknamed Bisqwit) once wrote a simulation of orbs in space, or stars, flying towards the viewer.
+As they fly, they create a beautiful and computationally cheap effect of motion blur.
+This fascinated me when I first saw it but the original code was written in QBasic64, so at least for me 
+it was hard to read and even harder to run.
 
-### How it works
+Therefore I ported it in C, sticking to the original code as much as possible, tweaking or un-hardcoding some parameters 
+to make it more vibrant and seamless. I added basic window and frame storage support.
 
-Blurring relies on the recurrence `blur[t+1] = decay * (blur[t] + ambience)`.
+Note that the original code was written using only 256 colors in DOS and by applying dithering.
+I used the same 256 palette but dithering in this project is optional and it significantly slows down the rendering pipeline.
+
+## How it works
+
+The core of this algorithm is blurring, which creates the illusion of motion blur 
+and relies on the recurrence:
+
+```
+blur[t+1] = decay * (blur[t] + ambience), with decay in 0..1
+```
 
 In more detail:
 
 ```
-for each pixel p:
-    blur[p] = (0,0,0)
+blur = {0 matrix}
+frame_buffer = {0 matrix}
+dithered = {0 matrix}
 
 for each frame t:
-    new_color[:] = blur[:]
-    # do the main rasterization work here
-    # add frame contributions into new_color (rasterization)
-    # ...
-    blur[:] = new_color[:]
-    for each pixel p:
-        blur[p] *= decay
+    frame_buffer = blur
+    blur = frame_buffer
+    for star in stars:
+        move star
+        apply perspective transform and enlarge radius
+        find bounding box and radially decay the glow away from its center 
+        blur += glow(star)
+    blur = decay(blur + ambience)
+    // the rest are optional:
+    chroma_correct(blur)
+    dithered = yk_dithering(blur)
 ```
 
 ## Building
 
-### Compile and run
+### Requirements
 
-You will need GNU make and to view it live you will need the X11 libraries.
-Alternatively, you can run in headless mode by dumping the frames as PPM files.
+If you want to run the windowed version, you'll X window manager support.
+You will also need GNU Make if you want to make the compilation easier.
+If you don't want to use X, you can run in headless mode by dumping the frames as PPM files.
+
+### Compile and run
 
 The supported build options/flags you can pass to `CDEFS` are:
 
 - `-DNO_X11` : disable linking/probing X11
-- `-DWIDTH=<N>` and `-DHEIGHT=<N>` : set resolution
+- `-DWIDTH=<N>` and `-DHEIGHT=<N>` : set resolution. Defaults to `640x480`.
 - `-DNSTARS=<N>` : set number of stars
 - `-DPPM` : enable PPM output to files
 - `-DDO_DITHER` : enable dithering
@@ -68,6 +90,13 @@ Example invocation:
 ./starfield --seed=42 --frames=500 --fps=30
 ```
 
+## Rendering example
 
+**TODO**
 
+## References
+
+1. [original code](https://bisqwit.iki.fi/jutut/kuvat/programming_examples/sfield_qb64.bas)
+2. [YouTube video](https://www.youtube.com/watch?v=VL0oGct1S4Q)
+3. [Joel Yliluoma's arbitrary-palette positional dithering algorithm](https://bisqwit.iki.fi/story/howto/dither/jy/)
 
