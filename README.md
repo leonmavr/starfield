@@ -3,13 +3,17 @@
 Joel Yliluoma (nicknamed Bisqwit) once wrote a simulation of orbs in space, or stars, flying towards the viewer.
 As they fly, they create a beautiful and computationally cheap effect of motion blur.
 This fascinated me when I first saw it but the original code was written in QBasic64, so at least for me 
-it was hard to read and even harder to run.
+it was hard to read and even harder to run as it was targetted on DOS.
 
 Therefore I ported it in C, sticking to the original code as much as possible, tweaking or un-hardcoding some parameters 
 to make it more vibrant and seamless. I added basic window and frame storage support.
 
 Note that the original code was written using only 256 colors in DOS by applying dithering.
 I used the same 256 palette but dithering in this project is optional as it significantly slows down the rendering pipeline.
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/leonmavr/starfield/refs/heads/master/assets/readme_art.png" width="800" />
+</div>
 
 ## How it works
 
@@ -36,8 +40,8 @@ for each frame t:
         find bounding box and radially decay the glow away from its center 
         blur += glow(star)
     blur = decay(blur + ambience)
-    // the rest is optional:
     chroma_correct(blur)
+    // the rest is optional:
     dithered = yk_dithering(blur)
 ```
 
@@ -45,7 +49,7 @@ for each frame t:
 
 ### Requirements
 
-If you want to run the windowed version, you'll X window manager support.
+If you want to run the windowed version, you'll need X window manager support.
 You will also need GNU Make if you want to make the compilation easier.
 If you don't want to use X, you can run in headless mode by dumping the frames as PPM files.
 
@@ -93,7 +97,10 @@ Example invocation:
 
 ## Rendering example
 
-**TODO**
+Below is a snippet with with=800, height=600, 625 stars and a seed of 42.
+
+https://github.com/user-attachments/assets/61023603-cc50-43f5-a974-0a19551749c0
+
 
 ## References
 
