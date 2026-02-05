@@ -3,9 +3,14 @@ CC ?= gcc
 TARGET ?= starfield
 SRC := $(wildcard src/*.c)
 OBJ := $(patsubst src/%.c,%.o,$(SRC))
+DEPS := $(OBJ:.o=.d)
 
 CFLAGS ?= -O2
 CFLAGS += -std=c11 -Wall -Wextra -pedantic
+
+# Auto-generate header dependency files (.d) next to objects
+# -> force make to rebuild objects if included headers change
+DEPFLAGS := -MMD -MP
 
 # Additional preprocessor flags:
 # -DNO_X11 to disable X11 output
@@ -38,10 +43,12 @@ $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) $(CDEFS) -o $@ $^ $(LDLIBS)
 
 %.o: src/%.c
-	$(CC) $(CFLAGS) $(CDEFS) $(X11_CFLAGS) -Isrc -c -o $@ $<
+	$(CC) $(CFLAGS) $(CDEFS) $(X11_CFLAGS) -Isrc $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ) $(DEPS) $(TARGET)
+
+-include $(DEPS)
