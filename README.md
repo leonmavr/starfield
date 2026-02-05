@@ -85,9 +85,10 @@ To run it:
 
 The program accepts a few command-line options:
 
-- `--seed N` or `-s N` : set the RNG seed. Defaults to 1234.
-- `--frames N` or `-f N` : number of frames to render. `0` means run forever. Defaults to 1000.
-- `--fps N` or `-p N` : FPS cap. `0` means uncapped. Defaults to 60.
+- `--seed N` or `-s N`: set the RNG seed. Defaults to 1234.
+- `--frames N` or `-f N`: number of frames to render. `0` means run forever. Defaults to 1000.
+- `--fps N` or `-p N`: FPS cap. `0` means uncapped. Defaults to 60.
+- `--chroma-correct`: Apply chrome correction; rescales RGB to 0..1 by desaturating it. Default OFF.
 - `--help` or `-h`: show the usage message.
 
 Example invocation:

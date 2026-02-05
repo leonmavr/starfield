@@ -95,18 +95,17 @@ static inline float clamp01(float x) {
 }
 
 // these includes depend on WIDTH, HEIGHT and clamp01
-#ifndef NO_X11
 #include "sf_x11.h"
-#endif
 #include "sf_ppm.h"
 
 static void usage(const char* argv0) {
     fprintf(stderr,
             "Usage: %s [--seed N] [--frames N] [--fps N]\n"
-            "  --seed|-s N     RNG seed (positive integer)\n"
-            "  --frames|-f N   Number of frames: 0 = infinite\n"
-            "  --fps|-p N      FPS cap: 0 = uncapped (default 60)\n"
-            "  -h, --help      Show this help\n",
+            "  --seed|-s N          RNG seed (positive integer)\n"
+            "  --frames|-f N        Number of frames: 0 = infinite\n"
+            "  --fps|-p N           FPS cap: 0 = uncapped (default 60)\n"
+            "  --chroma-correct     Enable chroma correction (default OFF)\n"
+            "  -h, --help           Show this message\n",
             argv0);
 }
 
@@ -280,6 +279,7 @@ int main(int argc, char** argv) {
     uint64_t frames = 1000;
     uint64_t seed = 1234;
     uint64_t fps = 60;
+    bool do_chroma_correct = false;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
@@ -325,6 +325,10 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "ERROR: invalid fps: %s\n", val);
                 return 1;
             }
+            continue;
+        }
+        if (!strcmp(arg, "--chroma-correct")) {
+            do_chroma_correct = true;
             continue;
         }
         if (!strncmp(arg, "--seed=", strlen("--seed="))) {
@@ -416,6 +420,9 @@ int main(int argc, char** argv) {
             pixel->r *= decay;
             pixel->g *= decay;
             pixel->b *= decay;
+            // rescales RGB channels within 0..1 but desaturates the color
+            if (do_chroma_correct)
+                chroma_correct(pixel);
         }
 #ifdef DO_DITHER
         for (int py = 0; py < HEIGHT; ++py) {
