@@ -17,10 +17,11 @@ I used the same 256 palette but dithering in this project is optional as it sign
 
 ## How it works
 
-The core of this algorithm is blurring, which creates the illusion of motion blur 
+The core of this algorithm is blurring after rasterization, which creates the illusion of motion blur 
 and relies on the recurrence:
 
 ```
+# move stars, rasterize them, add radial glow... 
 blur[t+1] = decay * (blur[t] + ambience), with decay in 0..1
 ```
 
