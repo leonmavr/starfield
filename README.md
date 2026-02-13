@@ -41,8 +41,8 @@ for each frame t:
         find bounding box and radially decay the glow away from its center 
         blur += glow(star)
     blur = decay(blur + ambience)
-    chroma_correct(blur)
     // the rest is optional:
+    chroma_correct(blur)
     dithered = yk_dithering(blur)
 ```
 
